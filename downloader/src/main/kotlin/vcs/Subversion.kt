@@ -74,6 +74,13 @@ object Subversion : VersionControlSystem() {
                 private fun getLineValue(linePrefix: String) =
                         infoCommandResult.requireSuccess().stdout().lineSequence().first { it.startsWith(linePrefix) }
                                 .removePrefix(linePrefix).trim()
+
+                override fun listRemoteTags(): List<String> {
+                    val tags = runMercurialCommand(workingDir, "tags").stdout()
+                    return tags.lines().map {
+                        it.split(' ').last()
+                    }
+                }
             }
 
     override fun isApplicableProvider(vcsProvider: String) = vcsProvider.toLowerCase() in listOf("subversion", "svn")

@@ -70,6 +70,13 @@ abstract class GitBase : VersionControlSystem() {
 
                     return runGitCommand(absolutePath, "rev-parse", "--show-prefix").stdout().trimEnd('\n', '/')
                 }
+
+                override fun listRemoteTags(): List<String> {
+                    val tags = runGitCommand(workingDir, "ls-remote --refs origin refs/tags/*").stdout()
+                    return tags.lines().map {
+                        it.split('\t').last()
+                    }
+                }
             }
 
     protected fun runGitCommand(workingDir: File, vararg args: String) =

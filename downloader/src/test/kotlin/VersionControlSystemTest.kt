@@ -63,6 +63,14 @@ class VersionControlSystemTest : WordSpec({
         }
     }
 
+    "Remote tags" should {
+        "be properly listed for Git" {
+            val scancodeDir = File(vcsRoot, "scanner/src/funTest/assets/scanners/scancode-toolkit")
+            val vcsDir = VersionControlSystem.forDirectory(scancodeDir)!!
+            vcsDir.listRemoteTags().first() shouldBe "refs/tags/v1.0.0"
+        }
+    }
+
     "splitUrl" should {
         "not modify GitHub URLs without a path" {
             val actual = VersionControlSystem.splitUrl(
