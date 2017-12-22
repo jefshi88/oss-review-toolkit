@@ -42,7 +42,7 @@ interface ScanResultsCache {
      * @param scannerName The name of the scanning tool that generated the results.
      * @param target The local file to store the scan results in.
      */
-    fun read(pkg: Package, scannerName: String, target: File): Boolean
+    fun read(pkg: Package, scannerName: String, target: File, load: Boolean = true): Boolean
 
     /**
      * Write a scan results file to the cache.
@@ -56,7 +56,7 @@ interface ScanResultsCache {
     companion object : ScanResultsCache {
 
         var cache = object : ScanResultsCache {
-            override fun read(pkg: Package, scannerName: String, target: File) = false
+            override fun read(pkg: Package, scannerName: String, target: File, load: Boolean) = false
             override fun write(pkg: Package, scannerName: String, source: File) = false
         }
             private set
@@ -94,7 +94,7 @@ interface ScanResultsCache {
             }
         }
 
-        override fun read(pkg: Package, scannerName: String, target: File) = cache.read(pkg, scannerName, target).also {
+        override fun read(pkg: Package, scannerName: String, target: File, load: Boolean) = cache.read(pkg, scannerName, target).also {
             ++stats.numReads
             if (it) {
                 ++stats.numHits

@@ -113,13 +113,13 @@ abstract class Scanner {
      *
      * @throws ScanException In case the package could not be scanned.
      */
-   fun scan(path: File, outputDirectory: File): Result {
-       val scanResultsDirectory = File(outputDirectory, "scanResults").apply { safeMkdirs() }
-       val scannerName = getName()
-       val resultsFile = File(scanResultsDirectory,
-               "${path.nameWithoutExtension}_$scannerName.$resultFileExtension")
+    fun scan(path: File, outputDirectory: File): Result {
+        val scanResultsDirectory = File(outputDirectory, "scanResults").apply { safeMkdirs() }
+        val scannerName = getName()
+        val resultsFile = File(scanResultsDirectory,
+                "${path.nameWithoutExtension}_$scannerName.$resultFileExtension")
 
-       return scanPath(path, resultsFile)
+        return scanPath(path, resultsFile)
    }
 
     /**

@@ -26,12 +26,11 @@ import com.beust.jcommander.JCommander
 import com.beust.jcommander.Parameter
 import com.beust.jcommander.ParameterException
 
+import com.fasterxml.jackson.module.kotlin.*
+
 import com.here.ort.downloader.DownloadException
 import com.here.ort.downloader.Main
-import com.here.ort.model.OutputFormat
-import com.here.ort.model.Package
-import com.here.ort.model.Project
-import com.here.ort.model.AnalyzerResult
+import com.here.ort.model.*
 import com.here.ort.scanner.scanners.ScanCode
 import com.here.ort.utils.collectMessages
 import com.here.ort.utils.jsonMapper
@@ -55,13 +54,14 @@ object ServerMain {
                     ?: throw ParameterException("The scanner must be one of ${Scanner.ALL}.")
         }
     }
+    data class Person(val name: String, val age: Int, val messages: List<String>) {
+    }
 
-    @Parameter(description = "The dependencies analysis file to use. Source code will be downloaded automatically if " +
-            "needed. This parameter and --input-path are mutually exclusive.",
-            names = ["--dependencies-file", "-d"],
-            required = true,
+    @Parameter(description = "The file of scan requests.",
+            names = ["--requests-file", "-r"],
+            // required = true,
             order = 0)
-    private var dependenciesFile: File? = null
+    private var requestsFile: File? = null
 
     @Parameter(description = "The output directory to store the scan results in.",
             names = ["--output-dir", "-o"],
@@ -70,15 +70,15 @@ object ServerMain {
     @Suppress("LateinitUsage")
     private lateinit var outputDir: File
 
-    @Parameter(description = "The output directory for downloaded source code. Defaults to <output-dir>/downloads.",
+    @Parameter(description = "The output directory for downloaded entities. Defaults to <output-dir>/downloads.",
             names = ["--download-dir"],
             order = 0)
     private var downloadDir: File? = null
 
-    @Parameter(description = "A comma-separated list of scanners to use.",
+    @Parameter(description = "A comma-separated list of scanners to use. Defaults to ALL",
             names = ["--scanners", "-s"],
             order = 0)
-    private var scanners: List<String> = listOf("scancode")
+    private var scannerSpecs: List<String> = listOf()
 
     @Parameter(description = "The path to the configuration file.",
             names = ["--config", "-c"],
@@ -145,39 +145,36 @@ object ServerMain {
             ScanResultsCache.configure(yamlMapper.readTree(configFile))
         }
 
-        dependenciesFile?.let { dependenciesFile ->
-            require(dependenciesFile.isFile) {
-                "Provided path is not a file: ${dependenciesFile.absolutePath}"
+        val mapper = jacksonObjectMapper()
+        val envRequests : String? = System.getenv("ORT_REQUESTS")
+        var requests: List<ScanRequestSpec> = listOf()
+        if (envRequests != null) {
+            requests = mapper.readValue(envRequests)
+        } else {
+            requestsFile?.let { requestsFile ->
+                require(requestsFile.isFile) {
+                    "Provided path is not a file: ${requestsFile.absolutePath}"
+                }
+                requests = mapper.readValue(requestsFile)
             }
-
-            val mapper = when (dependenciesFile.extension) {
-                OutputFormat.JSON.fileEnding -> jsonMapper
-                OutputFormat.YAML.fileEnding -> yamlMapper
-                else -> throw IllegalArgumentException("Provided input file is neither JSON nor YAML.")
-            }
-            val analyzerResult = mapper.readValue(dependenciesFile, AnalyzerResult::class.java)
-
-            val packages = mutableListOf(analyzerResult.project.toPackage())
-            packages.addAll(analyzerResult.packages)
-            packages.forEach { pkg ->
-                processEntry(pkg)
-            }
+        }
+        requests.forEach { request ->
+            processEntry(request.toPackage())
         }
     }
 
     private fun processEntry(pkg: Package) {
         try {
             var packageDownloadDirectory: File? = null
-            scanners.forEach { scannerName ->
-                val scanner = ScannerConverter().convert(scannerName)
+            val scanners = if (scannerSpecs.isEmpty()) Scanner.ALL else scannerSpecs.map { ScannerConverter().convert(it) }
+            scanners.forEach { scanner ->
                 if (!scanner.canScan(pkg)) {
                     return
                 }
                 val qualifiedScannerName = scanner.getName()
                 val extension = scanner.resultFileExtension
                 val resultsFile = getScanResultsFilename(pkg, qualifiedScannerName, extension)
-                // see if the package has already been scanned and ensure the results are in resultsFile
-                if (ScanResultsCache.read(pkg, qualifiedScannerName, resultsFile)) {
+                if (ScanResultsCache.read(pkg, qualifiedScannerName, resultsFile, false)) {
                     println("Found package '$pkg.identifier' for $scanner in the cache.")
                     return
                 }
@@ -202,7 +199,7 @@ object ServerMain {
                 }
             }
         } catch (e: ScanException) {
-            if (e.stackTrace != null) {
+            if (Main.stacktrace) {
                 e.printStackTrace()
             }
 

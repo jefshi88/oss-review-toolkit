@@ -37,7 +37,7 @@ class ArtifactoryCache(
         private val apiToken: String
 ) : ScanResultsCache {
 
-    override fun read(pkg: Package, scannerName: String, target: File): Boolean {
+    override fun read(pkg: Package, scannerName: String, target: File, load: Boolean): Boolean {
         val cachePath = cachePath(pkg, target)
 
         log.info { "Trying to read scan results from Artifactory cache: $cachePath" }
@@ -51,6 +51,9 @@ class ArtifactoryCache(
 
         return OkHttpClientHelper.execute("scanner", request).use { response ->
             (response.code() == HttpURLConnection.HTTP_OK).also {
+                if (!load) {
+                    return true
+                }
                 val message = if (it) {
                     response.body()?.let { target.writeBytes(it.bytes()) }
                     if (response.cacheResponse() != null) {
