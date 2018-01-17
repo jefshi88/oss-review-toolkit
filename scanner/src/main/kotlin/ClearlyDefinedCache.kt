@@ -69,28 +69,29 @@ class ClearlyDefinedCache(
     }
 
     override fun write(pkg: Package, source: File): Boolean {
-        val cachePath = cachePath(pkg, source)
+        throw Exception("writing not allowed")
+        // val cachePath = cachePath(pkg, source)
 
-        log.info { "Writing scan results to ClearlyDefined service: $cachePath" }
+        // log.info { "Writing scan results to ClearlyDefined service: $cachePath" }
 
-        val request = Request.Builder()
-                .header("Authorization", apiToken)
-                .put(OkHttpClientHelper.createRequestBody(source))
-                .url("$url/$cachePath")
-                .build()
+        // val request = Request.Builder()
+        //         .header("Authorization", apiToken)
+        //         .put(OkHttpClientHelper.createRequestBody(source))
+        //         .url("$url/$cachePath")
+        //         .build()
 
-        return OkHttpClientHelper.execute("scanner", request).use { response ->
-            (response.code() == HttpURLConnection.HTTP_CREATED).also {
-                log.info {
-                    if (it) {
-                        "Uploaded $cachePath to ClearlyDefined service."
-                    } else {
-                        "Could not upload $cachePath to ClearlyDefined service: ${response.code()} - " +
-                                response.message()
-                    }
-                }
-            }
-        }
+        // return OkHttpClientHelper.execute("scanner", request).use { response ->
+        //     (response.code() == HttpURLConnection.HTTP_CREATED).also {
+        //         log.info {
+        //             if (it) {
+        //                 "Uploaded $cachePath to ClearlyDefined service."
+        //             } else {
+        //                 "Could not upload $cachePath to ClearlyDefined service: ${response.code()} - " +
+        //                         response.message()
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     private fun cachePath(pkg: Package, resultsFile: File): String {
