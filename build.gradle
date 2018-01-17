@@ -2,10 +2,11 @@ plugins {
     // We need to hard-code the version here because of
     // https://github.com/gradle/gradle/issues/1697
     id 'org.jetbrains.kotlin.jvm' version '1.2.10' apply false
+    id 'org.jetbrains.dokka' version '0.9.15' apply false
 
     // Note that the detekt Gradle plugin version does not necessarily
     // match the detekt tool version.
-    id 'io.gitlab.arturbosch.detekt' version '1.0.0.RC5-6' apply false
+    id 'io.gitlab.arturbosch.detekt' version '1.0.0.RC6-1' apply false
 
     id 'com.github.ben-manes.versions' version '0.15.0' apply false
 }
@@ -19,6 +20,7 @@ subprojects {
 
     // Apply third-party plugins.
     apply plugin: 'org.jetbrains.kotlin.jvm'
+    apply plugin: 'org.jetbrains.dokka'
     apply plugin: 'io.gitlab.arturbosch.detekt'
     apply plugin: 'com.github.ben-manes.versions'
 
@@ -87,7 +89,7 @@ subprojects {
     }
 
     detekt {
-        version = '1.0.0.RC5-6'
+        version = '1.0.0.RC6-1'
 
         profile('main') {
             config = '../detekt.yml'
@@ -135,4 +137,30 @@ subprojects {
 
     check.dependsOn detektCheck
     check.dependsOn funTest
+
+    task dokkaJavadoc(type: org.jetbrains.dokka.gradle.DokkaTask) {
+        outputFormat = 'javadoc'
+        outputDirectory = "$buildDir/javadoc"
+    }
+
+    task sourcesJar(type: Jar) {
+        classifier = 'sources'
+        from sourceSets.main.allSource
+    }
+
+    task dokkaJar(type: Jar, dependsOn: dokka) {
+        classifier = 'dokka'
+        from dokka.outputDirectory
+    }
+
+    task javadocJar(type: Jar, dependsOn: dokkaJavadoc) {
+        classifier = 'javadoc'
+        from dokkaJavadoc.outputDirectory
+    }
+
+    artifacts {
+        archives sourcesJar
+        archives dokkaJar
+        archives javadocJar
+    }
 }

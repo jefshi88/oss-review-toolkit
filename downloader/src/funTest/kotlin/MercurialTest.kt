@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,23 +19,21 @@
 
 package com.here.ort.downloader.vcs
 
+import com.here.ort.model.VcsInfo
 import com.here.ort.utils.Expensive
 
 import io.kotlintest.TestCaseContext
-import io.kotlintest.matchers.beGreaterThan
-import io.kotlintest.matchers.should
 import io.kotlintest.matchers.shouldBe
-import io.kotlintest.matchers.shouldNotBe
 import io.kotlintest.specs.StringSpec
 
 import java.io.File
 
 private const val REPO_URL = "https://bitbucket.org/creaceed/mercurial-xcode-plugin"
-private const val REPO_REV = "02098fc8bdac"
-private const val REPO_SUBDIR = "Classes"
-private const val REPO_SUBDIR_OMITTED = "Resources"
+private const val REPO_REV = "02098fc8bdaca4739ec52cbcb8ed51654eacee25"
+private const val REPO_PATH = "Classes"
 private const val REPO_VERSION = "1.1"
-private const val REPO_VERSION_REV = "562fed42b4f3"
+private const val REPO_REV_FOR_VERSION = "562fed42b4f3dceaacf6f1051963c865c0241e28"
+private const val REPO_PATH_FOR_VERSION = "Resources"
 
 class MercurialTest : StringSpec() {
     private lateinit var outputDir: File
@@ -45,45 +43,98 @@ class MercurialTest : StringSpec() {
 
     override fun interceptTestCase(context: TestCaseContext, test: () -> Unit) {
         outputDir = createTempDir()
-        super.interceptTestCase(context, test)
-        outputDir.deleteRecursively()
+        try {
+            super.interceptTestCase(context, test)
+        } finally {
+            outputDir.deleteRecursively()
+        }
     }
 
     init {
-        "Detected Mercurial version is not empty" {
-            val version = Mercurial.getVersion()
-            println("Mercurial version $version detected.")
-            version shouldNotBe ""
-        }
+        "Mercurial can download a given revision" {
+            val vcs = VcsInfo("Mercurial", REPO_URL, REPO_REV, "")
+            val expectedFiles = listOf(
+                    ".hg",
+                    ".hgsub",
+                    ".hgsubstate",
+                    "Classes",
+                    "LICENCE.md",
+                    "MercurialPlugin.xcodeproj",
+                    "README.md",
+                    "Resources",
+                    "Script"
+            )
 
-        "Mercurial correctly detects URLs to remote repositories" {
-            Mercurial.isApplicableUrl("https://bitbucket.org/paniq/masagin") shouldBe true
+            val workingTree = Mercurial.download(vcs, "", outputDir)
+            val actualFiles = workingTree.workingDir.list().sorted()
 
-            // Bitbucket forwards to ".git" URLs for Git repositories, so we can omit the suffix.
-            Mercurial.isApplicableUrl("https://bitbucket.org/yevster/spdxtraxample") shouldBe false
-        }
-
-        "Mercurial can download entire repo" {
-            Mercurial.download(REPO_URL, null, null, "", outputDir)
-            Mercurial.getWorkingDirectory(outputDir).getProvider() shouldBe "Mercurial"
+            workingTree.isValid() shouldBe true
+            workingTree.getRevision() shouldBe REPO_REV
+            actualFiles.joinToString("\n") shouldBe expectedFiles.joinToString("\n")
         }.config(tags = setOf(Expensive))
 
-        "Mercurial can download single revision" {
-            val downloadedRev = Mercurial.download(REPO_URL, REPO_REV, null, "", outputDir)
-            downloadedRev shouldBe REPO_REV
+        "Mercurial can download only a single path" {
+            val vcs = VcsInfo("Mercurial", REPO_URL, REPO_REV, REPO_PATH)
+            val expectedFiles = listOf(
+                    File(".hgsub"), // We always get these configuration files, if present.
+                    File(".hgsubstate"),
+                    File(REPO_PATH, "MercurialPlugin.h"),
+                    File(REPO_PATH, "MercurialPlugin.m"),
+                    File("Script", "README"), // As a submodule, "Script" is always included.
+                    File("Script", "git.py"),
+                    File("Script", "gpl-2.0.txt"),
+                    File("Script", "install_bridge.sh"),
+                    File("Script", "sniff.py"),
+                    File("Script", "uninstall_bridge.sh")
+            )
+
+            val workingTree = Mercurial.download(vcs, "", outputDir)
+            val actualFiles = workingTree.workingDir.walkBottomUp()
+                    .onEnter { it.name != ".hg" }
+                    .filter { it.isFile }
+                    .map { it.relativeTo(outputDir) }
+                    .sortedBy { it.path }
+
+            workingTree.isValid() shouldBe true
+            workingTree.getRevision() shouldBe REPO_REV
+            actualFiles.joinToString("\n") shouldBe expectedFiles.joinToString("\n")
+        }.config(enabled = Mercurial.isAtLeastVersion("4.3"), tags = setOf(Expensive))
+
+        "Mercurial can download based on a version" {
+            val vcs = VcsInfo("Mercurial", REPO_URL, "", "")
+
+            val workingTree = Mercurial.download(vcs, REPO_VERSION, outputDir)
+
+            workingTree.isValid() shouldBe true
+            workingTree.getRevision() shouldBe REPO_REV_FOR_VERSION
         }.config(tags = setOf(Expensive))
 
-        "Mercurial can download sub path" {
-            Mercurial.download(REPO_URL, null, REPO_SUBDIR, "", outputDir)
+        "Mercurial can download only a single path based on a version" {
+            val vcs = VcsInfo("Mercurial", REPO_URL, "", REPO_PATH_FOR_VERSION)
+            val expectedFiles = listOf(
+                    File(".hgsub"), // We always get these configuration files, if present.
+                    File(".hgsubstate"),
+                    File(REPO_PATH_FOR_VERSION, "Info.plist"),
+                    File(REPO_PATH_FOR_VERSION, "icon.icns"),
+                    File(REPO_PATH_FOR_VERSION, "icon_blank.icns"),
+                    File("Script", "README"), // As a submodule, "Script" is always included.
+                    File("Script", "git.py"),
+                    File("Script", "gpl-2.0.txt"),
+                    File("Script", "install_bridge.sh"),
+                    File("Script", "sniff.py"),
+                    File("Script", "uninstall_bridge.sh")
+            )
 
-            val outputDirList = Mercurial.getWorkingDirectory(outputDir).workingDir.list()
-            outputDirList.indexOf(REPO_SUBDIR) should beGreaterThan(-1)
-            outputDirList.indexOf(REPO_SUBDIR_OMITTED) shouldBe -1
-        }.config(tags = setOf(Expensive), enabled = Mercurial.isAtLeastVersion("4.3"))
+            val workingTree = Mercurial.download(vcs, REPO_VERSION, outputDir)
+            val actualFiles = workingTree.workingDir.walkBottomUp()
+                    .onEnter { it.name != ".hg" }
+                    .filter { it.isFile }
+                    .map { it.relativeTo(outputDir) }
+                    .sortedBy { it.path }
 
-        "Mercurial can download version" {
-            val downloadedRev = Mercurial.download(REPO_URL, null, null, REPO_VERSION, outputDir)
-            downloadedRev shouldBe REPO_VERSION_REV
-        }.config(tags = setOf(Expensive))
+            workingTree.isValid() shouldBe true
+            workingTree.getRevision() shouldBe REPO_REV_FOR_VERSION
+            actualFiles.joinToString("\n") shouldBe expectedFiles.joinToString("\n")
+        }.config(enabled = Mercurial.isAtLeastVersion("4.3"), tags = setOf(Expensive))
     }
 }

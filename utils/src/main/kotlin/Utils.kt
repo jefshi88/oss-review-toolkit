@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ package com.here.ort.utils
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.dataformat.xml.XmlFactory
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 
@@ -41,6 +42,7 @@ import okhttp3.Response
 val log = org.slf4j.LoggerFactory.getLogger({}.javaClass) as ch.qos.logback.classic.Logger
 
 val jsonMapper = ObjectMapper().registerKotlinModule()
+val xmlMapper = ObjectMapper(XmlFactory()).registerKotlinModule()
 val yamlMapper = ObjectMapper(YAMLFactory()).registerKotlinModule()
 
 /**
@@ -65,9 +67,9 @@ object OkHttpClientHelper {
     /**
      * Execute a request using the client for the specified cache directory.
      */
-    fun execute(cacheSubDirectory: String, request: Request): Response {
-        val client = clients.getOrPut(cacheSubDirectory) {
-            val cacheDirectory = File(getUserConfigDirectory(), "cache/$cacheSubDirectory")
+    fun execute(cachePath: String, request: Request): Response {
+        val client = clients.getOrPut(cachePath) {
+            val cacheDirectory = File(getUserConfigDirectory(), cachePath)
             val cache = Cache(cacheDirectory, 10 * 1024 * 1024)
             OkHttpClient.Builder().cache(cache).build()
         }
@@ -138,6 +140,12 @@ fun String.fileSystemDecode(): String =
         java.net.URLDecoder.decode(this, "UTF-8")
 
 /**
+ * Delete files recursively without failing if e.g. individual files in symlinked directories could not be deleted due
+ * to permission issues if in the end the named directory does not exist anymore.
+ */
+fun File.safeDeleteRecursively() = this.deleteRecursively() || !this.exists()
+
+/**
  * Create all missing intermediate directories without failing if any already exists.
  *
  * @throws IOException if any missing directory could not be created.
@@ -147,7 +155,7 @@ fun File.safeMkdirs() {
         return
     }
 
-    throw IOException("Could not create directory ${this.absolutePath}.")
+    throw IOException("Could not create directory '${this.absolutePath}'.")
 }
 
 /**

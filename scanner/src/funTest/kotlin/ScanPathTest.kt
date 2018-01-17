@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,12 +23,25 @@ import com.here.ort.scanner.scanners.ScanCode
 import com.here.ort.utils.Expensive
 
 import io.kotlintest.matchers.shouldBe
+import io.kotlintest.TestCaseContext
 import io.kotlintest.specs.StringSpec
 
 import java.io.File
 
 class ScanPathTest : StringSpec() {
-    private val outputDir = createTempDir()
+    private lateinit var outputDir: File
+
+    // Required to make lateinit of outputDir work.
+    override val oneInstancePerTest = false
+
+    override fun interceptTestCase(context: TestCaseContext, test: () -> Unit) {
+        outputDir = createTempDir()
+        try {
+            super.interceptTestCase(context, test)
+        } finally {
+            outputDir.deleteRecursively()
+        }
+    }
 
     init {
         "ScanCode recognizes our own LICENSE" {

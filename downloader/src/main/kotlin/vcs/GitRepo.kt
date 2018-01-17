@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import ch.frankel.slf4k.*
 
 import com.here.ort.downloader.DownloadException
 import com.here.ort.downloader.Main
+import com.here.ort.model.VcsInfo
 import com.here.ort.utils.ProcessCapture
 import com.here.ort.utils.log
 
@@ -30,8 +31,8 @@ import java.io.File
 import java.io.IOException
 
 object GitRepo : GitBase() {
-    override fun getWorkingDirectory(vcsDirectory: File) =
-            super.getWorkingDirectory(File(vcsDirectory, ".repo/manifests"))
+    override fun getWorkingTree(vcsDirectory: File) =
+            super.getWorkingTree(File(vcsDirectory, ".repo/manifests"))
 
     override fun isApplicableProvider(vcsProvider: String) =
             vcsProvider.toLowerCase() in listOf("gitrepo", "git-repo", "repo")
@@ -45,25 +46,24 @@ object GitRepo : GitBase() {
      *
      * @throws DownloadException In case the download failed.
      */
-    override fun download(vcsUrl: String, vcsRevision: String?, vcsPath: String?, version: String, targetDir: File)
-            : String {
-        val revision = if (vcsRevision != null && vcsRevision.isNotEmpty()) vcsRevision else "master"
-        val manifestPath = if (vcsPath != null && vcsPath.isNotEmpty()) vcsPath else "manifest.xml"
+    override fun download(vcs: VcsInfo, version: String, targetDir: File): WorkingTree {
+        val revision = if (vcs.revision.isNotBlank()) vcs.revision else "master"
+        val manifestPath = if (vcs.path.isNotBlank()) vcs.path else "manifest.xml"
 
         try {
-            log.debug { "Initialize git-repo from $vcsUrl with branch $revision and manifest $manifestPath." }
-            runRepoCommand(targetDir, "init", "--depth", "1", "-b", revision, "-u", vcsUrl, "-m", manifestPath)
+            log.debug { "Initialize git-repo from ${vcs.url} with branch $revision and manifest $manifestPath." }
+            runRepoCommand(targetDir, "init", "--depth", "1", "-b", revision, "-u", vcs.url, "-m", manifestPath)
 
             log.debug { "Start git-repo sync." }
             runRepoCommand(targetDir, "sync", "-c")
 
-            return getWorkingDirectory(targetDir).getRevision()
+            return getWorkingTree(targetDir)
         } catch (e: IOException) {
             if (Main.stacktrace) {
                 e.printStackTrace()
             }
 
-            throw DownloadException("Could not clone $vcsUrl/$manifestPath", e)
+            throw DownloadException("Could not clone ${vcs.url}/$manifestPath", e)
         }
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -82,13 +82,32 @@ class Maven : PackageManager() {
     override fun prepareResolution(definitionFiles: List<File>): List<File> {
         val projectBuilder = maven.container.lookup(ProjectBuilder::class.java, "default")
         val projectBuildingRequest = maven.createProjectBuildingRequest(false)
-        val projectBuildingResults = projectBuilder.build(definitionFiles, false, projectBuildingRequest)
+        val projectBuildingResults = try {
+            projectBuilder.build(definitionFiles, false, projectBuildingRequest)
+        } catch (e: ProjectBuildingException) {
+            if (Main.stacktrace) {
+                e.printStackTrace()
+            }
+
+            log.warn {
+                "There have been issues building the Maven project models, this could lead to errors during " +
+                        "dependency analysis: ${e.message}"
+            }
+            e.results
+        }
 
         projectBuildingResults.forEach { projectBuildingResult ->
-            val project = projectBuildingResult.project
-            val identifier = "${project.groupId}:${project.artifactId}:${project.version}"
+            if (projectBuildingResult.project == null) {
+                log.warn {
+                    "Project for POM file '${projectBuildingResult.pomFile.absolutePath}' could not be built:\n" +
+                            projectBuildingResult.problems.joinToString(separator = "\n")
+                }
+            } else {
+                val project = projectBuildingResult.project
+                val identifier = "${project.groupId}:${project.artifactId}:${project.version}"
 
-            projectsByIdentifier[identifier] = projectBuildingResult
+                projectsByIdentifier[identifier] = projectBuildingResult
+            }
         }
 
         return definitionFiles
@@ -109,7 +128,7 @@ class Maven : PackageManager() {
             scope.dependencies.add(parseDependency(node, packages))
         }
 
-        // Try to get VCS information from the POM's SCM tag, or otherwise from the working directory.
+        // Try to get VCS information from the POM's SCM tag, or otherwise from the VCS working tree.
         val vcs = maven.parseVcsInfo(mavenProject).takeUnless {
             it == VcsInfo.EMPTY
         } ?: VersionControlSystem.forDirectory(projectDir)?.let {

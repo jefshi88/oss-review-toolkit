@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -65,7 +65,7 @@ class HttpCacheTest : StringSpec() {
             server.createContext("/", MyHttpHandler())
             server.start()
 
-            test()
+            super.interceptTestCase(context, test)
         } finally {
             // Ensure the server is properly stopped even in case of exceptions.
             server.stop(0)

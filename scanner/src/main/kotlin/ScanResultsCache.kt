@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -63,7 +63,7 @@ interface ScanResultsCache {
 
         fun configure(config: JsonNode?) {
             // Return early if there is no cache configuration.
-            val cacheNode = config?.get("scanner")?.get("cache") ?: return
+            val cacheNode = config?.get(Main.TOOL_NAME)?.get("cache") ?: return
 
             val type = cacheNode["type"]?.asText() ?: throw IllegalArgumentException("Cache type is missing.")
 

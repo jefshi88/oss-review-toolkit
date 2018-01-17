@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@ import com.here.ort.model.Project
 import com.here.ort.model.VcsInfo
 import com.here.ort.utils.jsonMapper
 import com.here.ort.utils.log
+import com.here.ort.utils.safeMkdirs
 import com.here.ort.utils.yamlMapper
 
 import java.io.File
@@ -45,6 +46,8 @@ import kotlin.system.exitProcess
  * The main entry point of the application.
  */
 object Main {
+    const val TOOL_NAME = "analyzer"
+
     private class PackageManagerConverter : IStringConverter<PackageManagerFactory<PackageManager>> {
         companion object {
             // Map upper-cased package manager class names to their instances.
@@ -121,16 +124,13 @@ object Main {
     private fun writeResultFile(projectRoot: File, currentPath: File, outputRoot: File, result: AnalyzerResult) {
         // Mirror the directory structure from the project in the output.
         val currentDir = if (currentPath.isFile) currentPath.parentFile else currentPath
-        val outputDir = File(outputRoot, currentDir.toRelativeString(projectRoot))
-        if (outputDir.mkdirs()) {
-            val outputFile = File(outputDir, currentPath.name.replace('.', '-') +
-                    "-dependencies." + outputFormat.fileEnding)
-            println("Writing results for\n\t$currentPath\nto\n\t$outputFile")
-            mapper.writerWithDefaultPrettyPrinter().writeValue(outputFile, result)
-            println("done.")
-        } else {
-            log.error { "Unable to create output directory '$outputDir'." }
-        }
+        val outputDir = File(outputRoot, currentDir.toRelativeString(projectRoot)).apply { safeMkdirs() }
+        val outputFile = File(outputDir, currentPath.name.replace('.', '-') +
+                "-dependencies." + outputFormat.fileEnding)
+
+        println("Writing results for\n\t$currentPath\nto\n\t$outputFile")
+        mapper.writerWithDefaultPrettyPrinter().writeValue(outputFile, result)
+        println("done.")
     }
 
     /**
@@ -142,7 +142,7 @@ object Main {
     fun main(args: Array<String>) {
         val jc = JCommander(this)
         jc.parse(*args)
-        jc.programName = "analyzer"
+        jc.programName = TOOL_NAME
 
         if (info) {
             log.level = ch.qos.logback.classic.Level.INFO

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,9 +33,7 @@ import com.here.ort.utils.log
 import java.io.File
 
 object ScanCode : Scanner() {
-
     private const val OUTPUT_FORMAT = "json-pp"
-    private const val PROCESSES = 6
     private const val TIMEOUT = 300
 
     private val DEFAULT_OPTIONS = listOf("--copyright", "--license", "--info", "--diag", "--only-findings",
@@ -67,7 +65,7 @@ object ScanCode : Scanner() {
                 executable,
                 *options.toTypedArray(),
                 "--timeout", TIMEOUT.toString(),
-                "-n", PROCESSES.toString(),
+                "-n", Math.max(1, Runtime.getRuntime().availableProcessors() - 1).toString(),
                 "-f", OUTPUT_FORMAT,
                 path.absolutePath,
                 resultsFile.absolutePath

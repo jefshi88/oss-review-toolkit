@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,19 +29,28 @@ import com.beust.jcommander.ParameterException
 import com.here.ort.model.OutputFormat
 import com.here.ort.model.Package
 import com.here.ort.model.AnalyzerResult
+import com.here.ort.utils.OkHttpClientHelper
 import com.here.ort.utils.jsonMapper
 import com.here.ort.utils.log
+import com.here.ort.utils.safeDeleteRecursively
 import com.here.ort.utils.safeMkdirs
 import com.here.ort.utils.yamlMapper
 
 import java.io.File
+import java.io.IOException
 
 import kotlin.system.exitProcess
+
+import okhttp3.Request
+
+import org.apache.commons.codec.digest.DigestUtils
 
 /**
  * The main entry point of the application.
  */
 object Main {
+    const val TOOL_NAME = "downloader"
+    const val HTTP_CACHE_PATH = "$TOOL_NAME/cache/http"
 
     enum class DataEntity {
         PACKAGES,
@@ -120,7 +129,7 @@ object Main {
     fun main(args: Array<String>) {
         val jc = JCommander(this)
         jc.parse(*args)
-        jc.programName = "downloader"
+        jc.programName = TOOL_NAME
 
         if (info) {
             log.level = ch.qos.logback.classic.Level.INFO
@@ -176,9 +185,10 @@ object Main {
      * @param target The description of the package to download.
      * @param outputDirectory The parent directory to download the source code to.
      *
-     * @return The directory containing the source code, or null if the source code could not be downloaded.
+     * @return The directory the source code was downloaded to.
+     *
+     * @throws DownloadException In case the download failed.
      */
-    @Suppress("ComplexMethod")
     fun download(target: Package, outputDirectory: File): File {
         // TODO: return also SHA1 which was finally cloned
         val p = fun(string: String) = println("${target.identifier}: $string")
@@ -188,57 +198,112 @@ object Main {
         p("Downloading source code to '${targetDir.absolutePath}'...")
 
         if (target.vcsProcessed.url.isNotBlank()) {
-            p("Trying to download from URL '${target.vcsProcessed.url}'...")
-
-            if (target.vcsProcessed.url != target.vcs.url) {
-                p("URL was normalized, original URL was '${target.vcs.url}'.")
-            }
-
-            if (target.vcsProcessed.revision.isBlank()) {
-                p("WARNING: No VCS revision provided, downloaded source code does likely not match revision " +
-                        target.version)
-            } else {
-                p("Downloading revision '${target.vcsProcessed.revision}'.")
-            }
-
-            var applicableVcs: VersionControlSystem? = null
-
-            p("Trying to detect VCS...")
-
-            if (target.vcsProcessed.provider.isNotBlank()) {
-                p("from provider name '${target.vcsProcessed.provider}'...")
-                applicableVcs = VersionControlSystem.forProvider(target.vcsProcessed.provider)
-            }
-
-            if (applicableVcs == null) {
-                p("from URL '${target.vcsProcessed.url}'...")
-                applicableVcs = VersionControlSystem.forUrl(target.vcsProcessed.url)
-            }
-
-            if (applicableVcs == null) {
-                throw DownloadException("Could not find an applicable VCS provider.")
-            }
-
-            p("Using VCS provider '$applicableVcs'.")
-
             try {
-                val revision = applicableVcs.download(target.vcsProcessed.url, target.vcsProcessed.revision,
-                        target.vcsProcessed.path, target.version, targetDir)
-                p("Finished downloading source code revision '$revision' to '${targetDir.absolutePath}'.")
-                return targetDir
+                return downloadFromVcs(target, targetDir)
             } catch (e: DownloadException) {
                 if (stacktrace) {
                     e.printStackTrace()
                 }
 
-                throw DownloadException("Could not download source code.", e)
+                // Clean up any files left from the failed VCS download (i.e. a ".git" directory)
+                targetDir.safeDeleteRecursively()
+                targetDir.safeMkdirs()
+                p("Download from VCS failed.")
             }
+        }
+
+        p("Trying to download source package ...")
+        return downloadSourcePackage(target, targetDir)
+    }
+
+    private fun downloadFromVcs(target: Package, outputDirectory: File): File {
+        val p = fun(string: String) = println("${target.identifier}: $string")
+
+        p("Trying to download from URL '${target.vcsProcessed.url}'...")
+
+        if (target.vcsProcessed.url != target.vcs.url) {
+            p("URL was normalized, original URL was '${target.vcs.url}'.")
+        }
+
+        if (target.vcsProcessed.revision.isBlank()) {
+            p("WARNING: No VCS revision provided, downloaded source code does likely not match revision " +
+                    target.version)
         } else {
-            p("No VCS URL provided.")
-            // TODO: This should also be tried if the VCS checkout does not work.
-            p("Trying to download source package ...")
-            // TODO: Implement downloading of source package.
-            throw DownloadException("No source code package URL provided.")
+            p("Downloading revision '${target.vcsProcessed.revision}'.")
+        }
+
+        var applicableVcs: VersionControlSystem? = null
+
+        p("Trying to detect VCS...")
+
+        if (target.vcsProcessed.provider.isNotBlank()) {
+            p("from provider name '${target.vcsProcessed.provider}'...")
+            applicableVcs = VersionControlSystem.forProvider(target.vcsProcessed.provider)
+        }
+
+        if (applicableVcs == null) {
+            p("from URL '${target.vcsProcessed.url}'...")
+            applicableVcs = VersionControlSystem.forUrl(target.vcsProcessed.url)
+        }
+
+        if (applicableVcs == null) {
+            throw DownloadException("Could not find an applicable VCS provider.")
+        }
+
+        p("Using VCS provider '$applicableVcs'.")
+
+        val workingTree = applicableVcs.download(target.vcsProcessed, target.version, outputDirectory)
+        val revision = workingTree.getRevision()
+        p("Finished downloading source code revision '$revision' to '${outputDirectory.absolutePath}'.")
+        return outputDirectory
+    }
+
+    private fun downloadSourcePackage(target: Package, outputDirectory: File): File {
+        if (target.sourceArtifact.url.isBlank()) {
+            throw DownloadException("No source artifact URL provided.")
+        }
+
+        val request = Request.Builder().url(target.sourceArtifact.url).build()
+
+        val response = OkHttpClientHelper.execute(HTTP_CACHE_PATH, request)
+        if (!response.isSuccessful || response.body() == null) {
+            throw DownloadException("Failed to download source artifact: $response")
+        }
+
+        val tempFile = createTempFile(suffix = target.sourceArtifact.url.substringAfterLast("/"))
+
+        tempFile.outputStream().use { stream ->
+            stream.write(response.body()!!.bytes())
+        }
+
+        verifyChecksum(tempFile, target.sourceArtifact.hash, target.sourceArtifact.hashAlgorithm)
+
+        try {
+            tempFile.unpack(outputDirectory)
+        } catch (e: IOException) {
+            log.error { "Could not unpack source artifact '${tempFile.absolutePath}': ${e.message}" }
+            throw DownloadException(e)
+        } finally {
+            if (!tempFile.delete()) {
+                log.warn { "Unable to delete temporary file '$tempFile'." }
+            }
+        }
+
+        return outputDirectory
+    }
+
+    private fun verifyChecksum(file: File, hash: String, hashAlgorithm: String) {
+        val digest = when (hashAlgorithm.toLowerCase()) {
+            "md5" -> file.inputStream().use { DigestUtils.md5Hex(it) }
+            "sha1", "sha-1" -> file.inputStream().use { DigestUtils.sha1Hex(it) }
+            else -> {
+                log.error { "Unknown hash algorithm: $hashAlgorithm" }
+                ""
+            }
+        }
+
+        if (digest != hash) {
+            throw DownloadException("Calculated $hashAlgorithm hash '$digest' differs from expected hash '$hash'.")
         }
     }
 }

@@ -31,6 +31,9 @@ their respective locations as follows:
 * `./downloader/build/install/downloader/bin/downloader`
 * `./scanner/build/install/scanner/bin/scanner`
 
+Make sure that the locale of your system is set to `en_US.UTF-8`, using other locales might lead to issues with parsing
+the output of external tools.
+
 ## Supported package managers
 
 Currently, the following package managers / build systems can be detected and queried for their managed dependencies:
@@ -221,6 +224,6 @@ The most important root project Gradle tasks are listed in the table below.
 
 ## License
 
-Copyright (c) 2017 HERE Europe B.V.
+Copyright (c) 2017-2018 HERE Europe B.V.
 
 See the [LICENSE](./LICENSE) file in the root of this project for license details.

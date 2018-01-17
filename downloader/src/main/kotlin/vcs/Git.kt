@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@ import ch.frankel.slf4k.*
 import com.here.ort.downloader.DownloadException
 import com.here.ort.downloader.Main
 import com.here.ort.downloader.VersionControlSystem
+import com.here.ort.model.VcsInfo
+import com.here.ort.utils.OS
 import com.here.ort.utils.log
 import com.here.ort.utils.ProcessCapture
 import com.here.ort.utils.getCommandVersion
@@ -34,22 +36,28 @@ import java.io.IOException
 
 abstract class GitBase : VersionControlSystem() {
     override fun getVersion(): String {
-        val gitVersionRegex = Regex("git version (?<version>[\\d.a-z-]+)(\\s.+)?")
+        val gitVersionRegex = Regex("[Gg]it [Vv]ersion (?<version>[\\d.a-z-]+)(\\s.+)?")
 
         return getCommandVersion("git") {
             gitVersionRegex.matchEntire(it.lineSequence().first())?.groups?.get("version")?.value ?: ""
         }
     }
 
-    override fun getWorkingDirectory(vcsDirectory: File) =
-            object : WorkingDirectory(vcsDirectory) {
+    override fun getWorkingTree(vcsDirectory: File) =
+            object : WorkingTree(vcsDirectory) {
                 override fun isValid(): Boolean {
                     if (!workingDir.isDirectory) {
                         return false
                     }
 
+                    // Do not use runGitCommand() here as we do not require the command to succeed.
                     val isInsideWorkTree = ProcessCapture(workingDir, "git", "rev-parse", "--is-inside-work-tree")
                     return isInsideWorkTree.exitValue() == 0 && isInsideWorkTree.stdout().trimEnd().toBoolean()
+                }
+
+                override fun isShallow(): Boolean {
+                    val dotGitDir = runGitCommand(workingDir, "rev-parse", "--absolute-git-dir").stdout().trimEnd()
+                    return File(dotGitDir, "shallow").isFile
                 }
 
                 override fun getRemoteUrl() =
@@ -58,17 +66,15 @@ abstract class GitBase : VersionControlSystem() {
                 override fun getRevision() =
                         runGitCommand(workingDir, "rev-parse", "HEAD").stdout().trimEnd()
 
-                override fun getRootPath(path: File) =
+                override fun getRootPath() =
                         runGitCommand(workingDir, "rev-parse", "--show-toplevel").stdout().trimEnd('\n', '/')
 
-                override fun getPathToRoot(path: File): String {
-                    val absolutePath = if (path.isAbsolute || path == workingDir) {
-                        path
-                    } else {
-                        workingDir.resolve(path)
+                override fun listRemoteTags(): List<String> {
+                    val tags = runGitCommand(workingDir, "ls-remote", "--refs", "origin", "refs/tags/*")
+                            .stdout().trimEnd()
+                    return tags.lines().map {
+                        it.split('\t').last().removePrefix("refs/tags/")
                     }
-
-                    return runGitCommand(absolutePath, "rev-parse", "--show-prefix").stdout().trimEnd('\n', '/')
                 }
             }
 
@@ -77,99 +83,99 @@ abstract class GitBase : VersionControlSystem() {
 }
 
 object Git : GitBase() {
+    // TODO: Make this configurable.
+    private const val HISTORY_DEPTH = 10
+
     override fun isApplicableProvider(vcsProvider: String) = vcsProvider.equals("git", true)
 
     override fun isApplicableUrl(vcsUrl: String) = ProcessCapture("git", "ls-remote", vcsUrl).exitValue() == 0
 
-    /**
-     * Clones the Git repository using the native Git command.
-     *
-     * @param vcsPath If this parameter is not null or empty, the working tree is deleted and the path is selectively
-     *                checked out using 'git checkout HEAD -- vcsPath'.
-     *
-     * @throws DownloadException In case the download failed.
-     */
-    @Suppress("ComplexMethod")
-    override fun download(vcsUrl: String, vcsRevision: String?, vcsPath: String?, version: String, targetDir: File)
-            : String {
+    override fun download(vcs: VcsInfo, version: String, targetDir: File): WorkingTree {
         log.info { "Using $this version ${getVersion()}." }
 
         try {
             // Do not use "git clone" to have more control over what is being fetched.
             runGitCommand(targetDir, "init")
-            runGitCommand(targetDir, "remote", "add", "origin", vcsUrl)
+            runGitCommand(targetDir, "remote", "add", "origin", vcs.url)
 
-            val workingDir = getWorkingDirectory(targetDir)
-
-            if (vcsPath != null && vcsPath.isNotEmpty()) {
-                log.info { "Configuring Git to do sparse checkout of path '$vcsPath'." }
-                runGitCommand(targetDir, "config", "core.sparseCheckout", "true")
-                val gitInfoDir = File(targetDir, ".git/info").apply { safeMkdirs() }
-                File(gitInfoDir, "sparse-checkout").writeText(vcsPath)
+            if (OS.isWindows) {
+                runGitCommand(targetDir, "config", "core.longpaths", "true")
             }
 
-            val committish = if (vcsRevision != null && vcsRevision.isNotEmpty()) vcsRevision else "HEAD"
+            if (vcs.path.isNotBlank()) {
+                log.info { "Configuring Git to do sparse checkout of path '${vcs.path}'." }
+                runGitCommand(targetDir, "config", "core.sparseCheckout", "true")
+                val gitInfoDir = File(targetDir, ".git/info").apply { safeMkdirs() }
+                File(gitInfoDir, "sparse-checkout").writeText(vcs.path)
+            }
 
-            // Do safe network bandwidth, first try to only fetch exactly the committish we want.
+            val workingTree = getWorkingTree(targetDir)
+
+            val revision = if (vcs.revision.isNotBlank()) {
+                vcs.revision
+            } else {
+                log.info { "Trying to guess $this revision for version '$version'." }
+                workingTree.guessRevisionNameForVersion(version).also { revision ->
+                    if (revision.isBlank()) {
+                        throw IOException("Unable to determine a revision to checkout.")
+                    }
+
+                    log.info { "Found $this revision '$revision' for version '$version'." }
+                }
+            }
+
+            // To safe network bandwidth, first try to only fetch exactly the revision we want.
             try {
-                runGitCommand(targetDir, "fetch", "origin", committish)
+                log.info { "Trying to fetch only revision '$revision' with depth limited to $HISTORY_DEPTH." }
+                runGitCommand(targetDir, "fetch", "--depth", HISTORY_DEPTH.toString(), "origin", revision)
                 runGitCommand(targetDir, "checkout", "FETCH_HEAD")
-                return workingDir.getRevision()
+                return workingTree
             } catch (e: IOException) {
                 if (Main.stacktrace) {
                     e.printStackTrace()
                 }
 
                 log.warn {
-                    "Could not fetch only '$committish': ${e.message}\n" +
-                            "Falling back to fetching everything."
+                    "Could not fetch only revision '$revision': ${e.message}\n" +
+                            "Falling back to fetching all refs."
                 }
             }
 
-            // Fall back to fetching everything.
-            log.info { "Fetching origin and trying to checkout '$committish'." }
-            runGitCommand(targetDir, "fetch", "origin")
-
+            // Fall back to fetching all refs with limited depth of history.
             try {
-                runGitCommand(targetDir, "checkout", committish)
-                return workingDir.getRevision()
+                log.info { "Trying to fetch all refs with depth limited to $HISTORY_DEPTH." }
+                runGitCommand(targetDir, "fetch", "--depth", HISTORY_DEPTH.toString(), "--tags", "origin")
+                runGitCommand(targetDir, "checkout", revision)
+                return workingTree
             } catch (e: IOException) {
                 if (Main.stacktrace) {
                     e.printStackTrace()
                 }
 
-                log.warn { "Could not checkout '$committish': ${e.message}" }
-            }
-
-            // If checking out the provided committish did not work and we have a version, try finding a tag
-            // belonging to the version to checkout.
-            if (version.isNotBlank()) {
-                log.info { "Trying to guess tag for version '$version'." }
-
-                val tag = runGitCommand(targetDir, "ls-remote", "--tags", "origin")
-                        .stdout()
-                        .lineSequence()
-                        .map { it.split("\t").last() }
-                        .find { it.endsWith(version) || it.endsWith(version.replace('.', '_')) }
-
-                if (tag != null) {
-                    log.info { "Using '$tag'." }
-                    runGitCommand(targetDir, "fetch", "origin", tag)
-                    runGitCommand(targetDir, "checkout", "FETCH_HEAD")
-                    return workingDir.getRevision()
+                log.warn {
+                    "Could not fetch with only a depth of $HISTORY_DEPTH: ${e.message}\n" +
+                            "Falling back to fetching everything."
                 }
-
-                log.warn { "No matching tag found for version '$version'." }
             }
 
-            throw IOException("Unable to determine a committish to checkout.")
+            // Fall back to fetching everything.
+            log.info { "Trying to fetch everything including tags." }
+
+            if (workingTree.isShallow()) {
+                runGitCommand(targetDir, "fetch", "--unshallow", "--tags", "origin")
+            } else {
+                runGitCommand(targetDir, "fetch", "--tags", "origin")
+            }
+
+            runGitCommand(targetDir, "checkout", revision)
+
+            return workingTree
         } catch (e: IOException) {
             if (Main.stacktrace) {
                 e.printStackTrace()
             }
 
-            log.error { "Could not clone $vcsUrl: ${e.message}" }
-            throw DownloadException("Could not clone $vcsUrl.", e)
+            throw DownloadException("$this failed to download from URL '${vcs.url}'.", e)
         }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,6 +43,7 @@ import kotlin.system.exitProcess
  * The main entry point of the application.
  */
 object Main {
+    const val TOOL_NAME = "graph"
 
     @Parameter(description = "The dependencies analysis file to use.",
             names = ["--dependencies-file", "-d"],
@@ -81,7 +82,7 @@ object Main {
     fun main(args: Array<String>) {
         val jc = JCommander(this)
         jc.parse(*args)
-        jc.programName = "graph"
+        jc.programName = TOOL_NAME
 
         if (info) {
             log.level = ch.qos.logback.classic.Level.INFO

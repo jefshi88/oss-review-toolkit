@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@ package com.here.ort.downloader
 
 import com.here.ort.downloader.vcs.*
 import com.here.ort.model.VcsInfo
+
+import com.vdurmont.semver4j.Semver
 
 import java.io.File
 import java.net.URI
@@ -57,7 +59,7 @@ abstract class VersionControlSystem {
          */
         fun forDirectory(vcsDirectory: File) =
                 ALL.asSequence().map {
-                    it.getWorkingDirectory(vcsDirectory)
+                    it.getWorkingTree(vcsDirectory)
                 }.find {
                     it.isValid()
                 }
@@ -78,6 +80,7 @@ abstract class VersionControlSystem {
             }
 
             return when {
+                uri.host == null -> VcsInfo("", vcsUrl, "", "")
                 uri.host.endsWith("github.com") -> {
                     var url = uri.scheme + "://" + uri.authority
 
@@ -98,10 +101,14 @@ abstract class VersionControlSystem {
                     var revision = ""
                     var path = ""
 
-                    if (pathIterator.hasNext() && pathIterator.next().toString() in listOf("blob", "tree")) {
-                        if (pathIterator.hasNext()) {
+                    if (pathIterator.hasNext()) {
+                        val extra = pathIterator.next().toString()
+                        if (extra in listOf("blob", "tree") && pathIterator.hasNext()) {
                             revision = pathIterator.next().toString()
                             path = uri.path.substringAfter(revision).trimStart('/').removeSuffix(".git")
+                        } else {
+                            // Just treat all the extra components as a path.
+                            path = (sequenceOf(extra) + pathIterator.asSequence()).joinToString("/")
                         }
                     }
 
@@ -147,11 +154,12 @@ abstract class VersionControlSystem {
     override fun toString(): String = javaClass.simpleName
 
     /**
-     * A class representing a local VCS working directory.
+     * A class representing a local VCS working tree. The passed [workingDir] does not necessarily need to be the
+     * root directory of the tree. The root directory can be determined by calling [getRootPath].
      */
-    abstract inner class WorkingDirectory(val workingDir: File) {
+    abstract inner class WorkingTree(val workingDir: File) {
         /**
-         * Return a simple string representation for the VCS this working directory belongs to.
+         * Return a simple string representation for the VCS this working tree belongs to.
          */
         fun getProvider() = this@VersionControlSystem.toString()
 
@@ -166,24 +174,65 @@ abstract class VersionControlSystem {
         abstract fun isValid(): Boolean
 
         /**
+         * Return whether this is a shallow working tree with truncated history.
+         */
+        abstract fun isShallow(): Boolean
+
+        /**
          * Return the clone URL of the associated remote repository.
          */
         abstract fun getRemoteUrl(): String
 
         /**
-         * Return the VCS-specific working directory revision.
+         * Return the VCS-specific working tree revision.
          */
         abstract fun getRevision(): String
 
         /**
-         * Return the VCS root for the given [path].
+         * Return the root directory of this working tree.
          */
-        abstract fun getRootPath(path: File): String
+        abstract fun getRootPath(): String
+
+        /**
+         * Return the list of tags available in the remote repository.
+         */
+        abstract fun listRemoteTags(): List<String>
+
+        /**
+         * Search (symbolic) names of VCS revisions for matches with the given version.
+         *
+         * @return A matching VCS revision or an empty String if no match is found.
+         */
+        internal fun guessRevisionNameForVersion(version: String): String {
+            if (version.isBlank()) {
+                return ""
+            }
+
+            val versionNames = setOf(
+                    version,
+                    version.replace('.', '-'),
+                    version.replace('.', '_')
+            )
+
+            // For now, only consider tag names, and not e.g. branch names.
+            val candidates = listRemoteTags().filter { tagName ->
+                versionNames.any { versionName ->
+                    tagName.endsWith(versionName) && tagName.removeSuffix(versionName).lastOrNull() != '.'
+                }
+            }
+
+            return candidates.firstOrNull() ?: ""
+        }
 
         /**
          * Return the relative path to [path] with respect to the VCS root.
          */
-        abstract fun getPathToRoot(path: File): String
+        fun getPathToRoot(path: File): String {
+            val relativePath = path.absoluteFile.relativeTo(File(getRootPath())).toString()
+
+            // Use Unix paths even on Windows for consistent output.
+            return relativePath.replace(File.separatorChar, '/')
+        }
     }
 
     /**
@@ -192,9 +241,17 @@ abstract class VersionControlSystem {
     abstract fun getVersion(): String
 
     /**
-     * Return a working directory instance for this VCS.
+     * Check whether the VCS tool is at least of the specified [expectedVersion], e.g. to check for features.
      */
-    abstract fun getWorkingDirectory(vcsDirectory: File): WorkingDirectory
+    fun isAtLeastVersion(expectedVersion: String): Boolean {
+        val actualVersion = Semver(getVersion(), Semver.SemverType.LOOSE)
+        return actualVersion.isGreaterThanOrEqualTo(Semver(expectedVersion, Semver.SemverType.LOOSE))
+    }
+
+    /**
+     * Return a working tree instance for this VCS.
+     */
+    abstract fun getWorkingTree(vcsDirectory: File): WorkingTree
 
     /**
      * Return true if the provider name matches this VCS. For example for SVN it should return true on "svn",
@@ -210,12 +267,11 @@ abstract class VersionControlSystem {
     abstract fun isApplicableUrl(vcsUrl: String): Boolean
 
     /**
-     * Use this VCS to download the source code from the specified URL.
+     * Download the source code as specified by the VCS information.
      *
-     * @return A String identifying the revision that was downloaded.
+     * @return An object describing the downloaded working tree.
      *
      * @throws DownloadException In case the download failed.
      */
-    abstract fun download(vcsUrl: String, vcsRevision: String?, vcsPath: String?, version: String, targetDir: File)
-            : String
+    abstract fun download(vcs: VcsInfo, version: String, targetDir: File): WorkingTree
 }
