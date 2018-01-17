@@ -28,19 +28,7 @@ import com.here.ort.utils.safeMkdirs
 import java.io.File
 import java.util.SortedSet
 
-abstract class Scanner {
-
-    companion object {
-        /**
-         * The list of all available scanners. This needs to be initialized lazily to ensure the referred objects,
-         * which derive from this class, exist.
-         */
-        val ALL by lazy {
-            listOf(
-                    ScanCode
-            )
-        }
-    }
+class Scanner {
 
     data class Result(val licenses: SortedSet<String>, val errors: SortedSet<String>)
 
@@ -67,8 +55,6 @@ abstract class Scanner {
         val scanResultsDirectory = File(outputDirectory, "scanResults").apply { safeMkdirs() }
         val scannerName = toString().toLowerCase()
 
-        // TODO: Consider implementing this logic in the Package class itself when creating the identifier.
-        // Also, think about what to use if we have neither a version nor a hash.
         val pkgRevision = pkg.version.let { if (it.isBlank()) pkg.vcs.revision.take(7) else it }
 
         val resultsFile = File(scanResultsDirectory,
@@ -78,17 +64,40 @@ abstract class Scanner {
             return getResult(resultsFile)
         }
 
-        val sourceDirectory = try {
-            Main.download(pkg, downloadDirectory ?: File(outputDirectory, "downloads"))
-        } catch (e: DownloadException) {
-            if (Main.stacktrace) {
-                e.printStackTrace()
-            }
-
-            throw ScanException("Package '${pkg.identifier}' could not be scanned.", e)
+        queueScan(pkg, scannerName)
+        // TODO wait for result, or not depending on the use case. Not sure the best way to do this in Kotlin
+        // in reality you want ot parallelize so that here we return and queue more stuff and then wait
+        // for it all to be done
+        do {
+            // wait for sometime or a callback or ...
         }
+        while (!ScanResultsCache.read(pkg, resultsFile)) 
+        return getResult(resultsFile)
+    }
 
-        return scanPath(sourceDirectory, resultsFile).also { ScanResultsCache.write(pkg, resultsFile) }
+    fun queueScan(pkg: Package, scannerName: String) {
+        log.info { "Queuing request to process: ${request.url}" }
+
+        // TODO structure request as a JSON object that looks like 
+        // { "type": "$scannerName", "url": "cd:/pkg.packageManager/pkg.provider/pkg.namespace/pkg.name/pkg.version" }
+        val requestString = null 
+        val request = Request.Builder()
+                .header("Authorization", apiToken)
+                .post(OkHttpClientHelper.createRequestBody(requestString))
+                .url("$cdUrl/harvest")
+                .build()
+
+        return OkHttpClientHelper.execute("scanner", request).use { response ->
+            (response.code() == HttpURLConnection.HTTP_CREATED).also {
+                log.info {
+                    if (it) {
+                        "Queued ${request.url} to be processed."
+                    } else {
+                        "Could not queue ${request.url} to be processed: ${response.code()} - " + response.message()
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -103,12 +112,7 @@ abstract class Scanner {
      * @throws ScanException In case the package could not be scanned.
      */
     fun scan(path: File, outputDirectory: File): Result {
-        val scanResultsDirectory = File(outputDirectory, "scanResults").apply { safeMkdirs() }
-        val scannerName = toString().toLowerCase()
-        val resultsFile = File(scanResultsDirectory,
-                "${path.nameWithoutExtension}_$scannerName.$resultFileExtension")
-
-        return scanPath(path, resultsFile)
+        throw new ScanException("Only scanning packages is supported")
     }
 
     /**

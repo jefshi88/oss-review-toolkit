@@ -198,15 +198,43 @@ object Main {
 
             val packages = mutableListOf(analyzerResult.project.toPackage())
             packages.addAll(analyzerResult.packages)
-
-            packages.forEach { pkg ->
-                val entry = pkgSummary.getOrPut(pkg.identifier) { SummaryEntry() }
-                entry.scopes.addAll(findScopesForPackage(pkg, analyzerResult.project))
-                scanEntry(entry, pkg.identifier, pkg)
-            }
+            queueScan(packages)
+            // TODO wait for results. Or not depending on the scenario
         }
 
         writeSummary(outputDir, ScanSummary(pkgSummary, ScanResultsCache.stats))
+    }
+
+    fun queueScan(packages: Package[]) {
+        log.info { "Queuing request to process: ${request.url}" }
+        val requestString = buildRequest(packages)
+        val request = Request.Builder()
+                .header("Authorization", apiToken)
+                .post(OkHttpClientHelper.createRequestBody(requestString))
+                .url("$cdUrl/harvest")
+                .build()
+
+        return OkHttpClientHelper.execute("scanner", request).use { response ->
+            (response.code() == HttpURLConnection.HTTP_CREATED).also {
+                log.info {
+                    if (it) {
+                        "Queued ${request.url} to be processed."
+                    } else {
+                        "Could not queue ${request.url} to be processed: ${response.code()} - " + response.message()
+                    }
+                }
+            }
+        }
+    }
+
+    fun buildRequest(packages: Package[]) {
+        // TODO structure request as a JSON object that looks like 
+        // [
+        //     { "type": "package", "url": "cd:/pkg1.packageManager/pkg1.provider/pkg1.namespace/pkg1.name/pkg1.version" },
+        //     { "type": "package", "url": "cd:/pkg2.packageManager/pkg2.provider/pkg2.namespace/pkg2.name/pkg2.version" }
+        //     ...
+        // ]
+        return null
     }
 
     private fun findScopesForPackage(pkg: Package, project: Project) =
