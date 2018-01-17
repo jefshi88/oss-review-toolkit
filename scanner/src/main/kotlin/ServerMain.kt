@@ -131,6 +131,10 @@ object ServerMain {
             exitProcess(1)
         }
 
+        require(System.getenv("ORT_REQUESTS") != null || (requestsFile != null && requestsFile.isFile)) {
+            "Either the requestsfile (-r) or ORT_REQUESTS env var must be set"
+        }
+
         require(!outputDir.exists()) {
             "The output directory '${outputDir.absolutePath}' must not exist yet."
         }
