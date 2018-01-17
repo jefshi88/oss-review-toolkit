@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,23 +19,21 @@
 
 package com.here.ort.downloader.vcs
 
+import com.here.ort.model.VcsInfo
 import com.here.ort.utils.Expensive
 
 import io.kotlintest.TestCaseContext
-import io.kotlintest.matchers.beGreaterThan
-import io.kotlintest.matchers.should
 import io.kotlintest.matchers.shouldBe
-import io.kotlintest.matchers.shouldNotBe
 import io.kotlintest.specs.StringSpec
 
 import java.io.File
 
-private const val REPO_URL = "https://svn.code.sf.net/p/pythonqt/code"
-private const val REPO_REV = "460"
-private const val REPO_SUBDIR = "extensions"
-private const val REPO_SUBDIR_OMITTED = "examples"
-private const val REPO_VERSION = "1.0"
-private const val REPO_VERSION_REV = "33"
+private const val REPO_URL = "https://svn.code.sf.net/p/sendmessage/code"
+private const val REPO_REV = "115"
+private const val REPO_PATH = "trunk"
+private const val REPO_VERSION = "1.0.1"
+private const val REPO_REV_FOR_VERSION = "30"
+private const val REPO_PATH_FOR_VERSION = "src/resources"
 
 class SubversionTest : StringSpec() {
     private lateinit var outputDir: File
@@ -45,41 +43,77 @@ class SubversionTest : StringSpec() {
 
     override fun interceptTestCase(context: TestCaseContext, test: () -> Unit) {
         outputDir = createTempDir()
-        super.interceptTestCase(context, test)
-        outputDir.deleteRecursively()
+        try {
+            super.interceptTestCase(context, test)
+        } finally {
+            outputDir.deleteRecursively()
+        }
     }
 
     init {
-        "Detected Subversion version is not empty" {
-            val version = Subversion.getVersion()
-            println("Subversion version $version detected.")
-            version shouldNotBe ""
-        }
+        "Subversion can download a given revision" {
+            val vcs = VcsInfo("Subversion", REPO_URL, REPO_REV, "")
+            val expectedFiles = listOf(
+                    ".svn",
+                    "branches",
+                    "tags",
+                    "trunk",
+                    "wiki"
+            )
 
-        "Subversion can download single revision" {
-            val downloadedRev = Subversion.download(REPO_URL, REPO_REV, null, "", outputDir)
-            downloadedRev shouldBe REPO_REV
+            val workingTree = Subversion.download(vcs, "", outputDir)
+            val actualFiles = workingTree.workingDir.list().sorted()
+
+            workingTree.isValid() shouldBe true
+            workingTree.getRevision() shouldBe REPO_REV
+            actualFiles.joinToString("\n") shouldBe expectedFiles.joinToString("\n")
         }.config(tags = setOf(Expensive))
 
-        "Subversion can download sub path" {
-            Subversion.download(REPO_URL, null, REPO_SUBDIR, "", outputDir)
+        "Subversion can download only a single path" {
+            val vcs = VcsInfo("Subversion", REPO_URL, REPO_REV, REPO_PATH)
+            val expectedFiles = listOf(
+                    "SendMessage.sln",
+                    "default.build",
+                    "default.build.user.tmpl",
+                    "sktoolslib", // This is an external.
+                    "src",
+                    "tools",
+                    "version.build.in",
+                    "versioninfo.build"
+            )
 
-            val outputDirList = Subversion.getWorkingDirectory(outputDir).workingDir.list()
-            outputDirList.indexOf(REPO_SUBDIR) should beGreaterThan(-1)
-            outputDirList.indexOf(REPO_SUBDIR_OMITTED) shouldBe -1
+            val workingTree = Subversion.download(vcs, "", outputDir)
+            val actualFiles = workingTree.workingDir.list().sorted()
+
+            workingTree.isValid() shouldBe true
+            workingTree.getRevision() shouldBe REPO_REV
+            actualFiles.joinToString("\n") shouldBe expectedFiles.joinToString("\n")
         }.config(tags = setOf(Expensive))
 
-        "Subversion can download version" {
-            val downloadedRev = Subversion.download(REPO_URL, null, null, REPO_VERSION, outputDir)
-            downloadedRev shouldBe REPO_VERSION_REV
+        "Subversion can download based on a version" {
+            val vcs = VcsInfo("Subversion", REPO_URL, "", "")
+
+            val workingTree = Subversion.download(vcs, REPO_VERSION, outputDir)
+
+            workingTree.isValid() shouldBe true
+            workingTree.getRevision() shouldBe REPO_REV_FOR_VERSION
         }.config(tags = setOf(Expensive))
 
-        "Subversion can download entire repo" {
-            Subversion.download(REPO_URL, null, null, "", outputDir)
-            val outputDirList = Subversion.getWorkingDirectory(outputDir).workingDir.list()
-            outputDirList.indexOf("trunk") should beGreaterThan(-1)
-            outputDirList.indexOf("tags") should beGreaterThan(-1)
-            outputDirList.indexOf("branches") should beGreaterThan(-1)
+        "Subversion can download only a single path based on a version" {
+            val vcs = VcsInfo("Subversion", REPO_URL, "", REPO_PATH_FOR_VERSION)
+            val expectedFiles = listOf(
+                    "SendMessage.ico",
+                    "searchw.cur",
+                    "searchw.ico",
+                    "windowmessages.xml"
+            )
+
+            val workingTree = Subversion.download(vcs, REPO_VERSION, outputDir)
+            val actualFiles = File(workingTree.workingDir, REPO_PATH_FOR_VERSION).list().sorted()
+
+            workingTree.isValid() shouldBe true
+            workingTree.getRevision() shouldBe REPO_REV_FOR_VERSION
+            actualFiles.joinToString("\n") shouldBe expectedFiles.joinToString("\n")
         }.config(tags = setOf(Expensive))
     }
 }

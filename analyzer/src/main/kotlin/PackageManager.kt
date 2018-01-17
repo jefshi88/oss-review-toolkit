@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,6 +44,8 @@ typealias ResolutionResult = MutableMap<File, AnalyzerResult>
  */
 abstract class PackageManager {
     companion object {
+        const val HTTP_CACHE_PATH = "${Main.TOOL_NAME}/cache/http"
+
         /**
          * The prioritized list of all available package managers. This needs to be initialized lazily to ensure the
          * referred objects, which derive from this class, exist.
@@ -81,14 +83,23 @@ abstract class PackageManager {
                     val filesInDir = dir.toFile().listFiles()
 
                     packageManagers.forEach { manager ->
-                        val matches = manager.matchersForDefinitionFiles.mapNotNull { glob ->
-                            filesInDir.find { file ->
-                                glob.matches(file.toPath())
+                        // Create a list of lists of matching files per glob.
+                        val matchesPerGlob = manager.matchersForDefinitionFiles.mapNotNull { glob ->
+                            // Create a list of files in the current directory that match the current glob.
+                            val filesMatchingGlob = filesInDir.filter { file ->
+                                file != null && glob.matches(file.toPath())
                             }
+                            filesMatchingGlob.takeIf { it.isNotEmpty() }
                         }
 
-                        if (matches.isNotEmpty()) {
-                            result.getOrPut(manager) { mutableListOf() }.add(matches.first())
+                        if (matchesPerGlob.isNotEmpty()) {
+                            // Only consider all matches for the first glob that has matches. This is because globs are
+                            // defined in order of priority, and multiple globs may just be alternative ways to detect
+                            // the exact same project.
+                            // That is, at the example of a PIP project, if a directory contains all three files
+                            // "requirements-py2.txt", "requirements-py3.txt" and "setup.py", only consider the
+                            // former two as they match the glob with the highest priority, but ignore "setup.py".
+                            result.getOrPut(manager) { mutableListOf() }.addAll(matchesPerGlob.first())
                         }
                     }
 

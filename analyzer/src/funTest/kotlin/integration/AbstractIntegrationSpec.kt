@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,11 +26,11 @@ import com.here.ort.downloader.VersionControlSystem
 import com.here.ort.model.Package
 import com.here.ort.utils.Expensive
 
-import io.kotlintest.Spec
 import io.kotlintest.matchers.beEmpty
 import io.kotlintest.matchers.shouldBe
 import io.kotlintest.matchers.shouldNot
 import io.kotlintest.matchers.shouldNotBe
+import io.kotlintest.Spec
 import io.kotlintest.specs.StringSpec
 
 import java.io.File
@@ -59,30 +59,27 @@ abstract class AbstractIntegrationSpec : StringSpec() {
     protected lateinit var downloadDir: File
 
     /**
-     * A temporary directory used as working directory for the test suite.
-     */
-    private val outputDir = createTempDir()
-
-    /**
      * The instance needs to be shared between tests because otherwise the source code of [pkg] would have to be
      * downloaded once per test.
      */
     override val oneInstancePerTest = false
 
     override fun interceptSpec(context: Spec, spec: () -> Unit) {
-        spec()
-        outputDir.deleteRecursively()
+        val outputDir = createTempDir()
+        downloadDir = Main.download(pkg, outputDir)
+        try {
+            super.interceptSpec(context, spec)
+        } finally {
+            outputDir.deleteRecursively()
+        }
     }
 
     init {
-        "Source code can be downloaded" {
-            downloadDir = Main.download(pkg, outputDir)
-            val workingDir = VersionControlSystem.forDirectory(downloadDir)
-
-            downloadDir shouldNotBe null
-            workingDir shouldNotBe null
-            workingDir!!.isValid() shouldBe true
-            workingDir.getProvider() shouldBe pkg.vcs.provider
+        "Source code was downloaded successfully" {
+            val workingTree = VersionControlSystem.forDirectory(downloadDir)
+            workingTree shouldNotBe null
+            workingTree!!.isValid() shouldBe true
+            workingTree.getProvider() shouldBe pkg.vcs.provider
         }.config(tags = setOf(Expensive))
 
         "All package manager definition files are found" {
@@ -106,9 +103,9 @@ abstract class AbstractIntegrationSpec : StringSpec() {
 
                 results.size shouldBe files.size
                 results.values.forEach { result ->
-                    VersionControlSystem.forProvider(result.project.vcs.provider) shouldBe
+                    VersionControlSystem.forProvider(result.project.vcsProcessed.provider) shouldBe
                             VersionControlSystem.forProvider(pkg.vcs.provider)
-                    result.project.vcs.url shouldBe pkg.vcs.url
+                    result.project.vcsProcessed.url shouldBe pkg.vcs.url
                     result.project.scopes shouldNot beEmpty()
                     result.packages shouldNot beEmpty()
                     result.hasErrors() shouldBe false

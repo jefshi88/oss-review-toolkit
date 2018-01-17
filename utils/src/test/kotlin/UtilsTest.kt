@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,9 +42,10 @@ class UtilsTest : WordSpec({
         }
 
         "create a valid file name" {
-            val fileFromStr = File(createTempDir(), str.fileSystemEncode()).apply { writeText("dummy") }
+            val tempDir = createTempDir()
+            val fileFromStr = File(tempDir, str.fileSystemEncode()).apply { writeText("dummy") }
             fileFromStr.isFile shouldBe true
-            fileFromStr.delete() shouldBe true
+            tempDir.safeDeleteRecursively() shouldBe true
         }
 
         "be reversible by String.urldecode" {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,5 +56,36 @@ data class VcsInfo(
                 revision = "",
                 path = ""
         )
+    }
+
+    /**
+     * Merge two sources of VCS information by mixing and matching fields to get as complete information as possible.
+     * If in question, information in this instance has precedence over information in the other instance.
+     */
+    fun merge(other: VcsInfo): VcsInfo {
+        var provider = this.provider
+        if (provider.equals(other.provider, true)) {
+            // Prefer the other provider only if its spelling matches the VCS class names.
+            if (other.provider.toLowerCase().capitalize() == other.provider) {
+                provider = other.provider
+            }
+        }
+
+        var url = this.url
+        if (url.isBlank() && other.url.isNotBlank()) {
+            url = other.url
+        }
+
+        var revision = this.revision
+        if (revision.isBlank() && other.revision.isNotBlank()) {
+            revision = other.revision
+        }
+
+        var path = this.path
+        if (path.isBlank() && other.path.isNotBlank()) {
+            path = other.path
+        }
+
+        return VcsInfo(provider, url, revision, path)
     }
 }

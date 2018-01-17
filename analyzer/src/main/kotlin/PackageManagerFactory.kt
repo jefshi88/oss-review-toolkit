@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ import java.nio.file.FileSystems
  * @property homepageUrl The URL to the package manager's homepage.
  * @property primaryLanguage The name of the programming language this package manager is primarily used with.
  * @param globsForDefinitionFiles A prioritized list of glob patterns of definition files supported by this package
- *                                manager.
+ *                                manager. Only all matches of the first glob having any matches is considered.
  */
 abstract class PackageManagerFactory<out T : PackageManager>(
         val homepageUrl: String,

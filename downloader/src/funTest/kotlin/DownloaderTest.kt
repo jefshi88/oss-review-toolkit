@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,100 +19,117 @@
 
 package com.here.ort.downloader
 
-import com.here.ort.downloader.vcs.Git
-import com.here.ort.downloader.vcs.Mercurial
 import com.here.ort.model.Package
 import com.here.ort.model.RemoteArtifact
 import com.here.ort.model.VcsInfo
 import com.here.ort.utils.Expensive
 
-import io.kotlintest.Spec
-import io.kotlintest.matchers.beGreaterThan
-import io.kotlintest.matchers.should
+import io.kotlintest.TestCaseContext
 import io.kotlintest.matchers.shouldBe
+import io.kotlintest.matchers.shouldThrow
 import io.kotlintest.specs.StringSpec
 
 import java.io.File
 
 class DownloaderTest : StringSpec() {
+    private lateinit var outputDir: File
 
-    private val outputDir = createTempDir()
+    // Required to make lateinit of outputDir work.
+    override val oneInstancePerTest = false
 
-    override fun interceptSpec(context: Spec, spec: () -> Unit) {
-        spec()
-        outputDir.deleteRecursively()
+    override fun interceptTestCase(context: TestCaseContext, test: () -> Unit) {
+        outputDir = createTempDir()
+        try {
+            super.interceptTestCase(context, test)
+        } finally {
+            outputDir.deleteRecursively()
+        }
     }
 
     init {
-        "Downloads subpath of package at specified revision from git" {
-            val submoduleName = "model"
-            val revision = "4d842ea6eda2d1a21db161ceb7ceabbcc23d8a85"
+        "Downloads and unpacks JAR source package" {
             val pkg = Package(
                     packageManager = "Gradle",
-                    namespace = "",
-                    name = "project :model",
-                    version = "",
+                    namespace = "junit",
+                    name = "junit",
+                    version = "4.12",
                     declaredLicenses = sortedSetOf(),
                     description = "",
                     homepageUrl = "",
                     binaryArtifact = RemoteArtifact.EMPTY,
-                    sourceArtifact = RemoteArtifact.EMPTY,
-                    vcs = VcsInfo("Git", "https://github.com/heremaps/oss-review-toolkit.git", revision, submoduleName)
+                    sourceArtifact = RemoteArtifact(
+                            url = "https://repo.maven.apache.org/maven2/junit/junit/4.12/junit-4.12-sources.jar",
+                            hash = "a6c32b40bf3d76eca54e3c601e5d1470c86fcdfa",
+                            hashAlgorithm = "SHA-1"
+                    ),
+                    vcs = VcsInfo.EMPTY
             )
-            Main.download(pkg, outputDir)
 
-            val workingDirectory = getWorkingDir(Git, pkg)
-            val outputDirList = workingDirectory.workingDir.list()
+            val downloadDir = Main.download(pkg, outputDir)
 
-            workingDirectory.isValid() shouldBe true
-            workingDirectory.getRevision() shouldBe revision
-            outputDirList.indexOf(submoduleName) should beGreaterThan(-1)
-            outputDirList.indexOf("downloader") shouldBe -1
+            val licenseFile = File(downloadDir, "LICENSE-junit.txt")
+            licenseFile.exists() shouldBe true
+            licenseFile.length() shouldBe 11376L
+
+            downloadDir.walkTopDown().count() shouldBe 234
         }.config(tags = setOf(Expensive))
 
-        "Downloads whole package from git" {
+        "Download of JAR source package fails when hash is incorrect" {
             val pkg = Package(
                     packageManager = "Gradle",
-                    namespace = "",
-                    name = "oss-review-toolkit",
-                    version = "",
+                    namespace = "junit",
+                    name = "junit",
+                    version = "4.12",
                     declaredLicenses = sortedSetOf(),
                     description = "",
                     homepageUrl = "",
                     binaryArtifact = RemoteArtifact.EMPTY,
-                    sourceArtifact = RemoteArtifact.EMPTY,
-                    vcs = VcsInfo("Git", "https://github.com/heremaps/oss-review-toolkit.git", "", "")
+                    sourceArtifact = RemoteArtifact(
+                            url = "https://repo.maven.apache.org/maven2/junit/junit/4.12/junit-4.12-sources.jar",
+                            hash = "0123456789abcdef0123456789abcdef01234567",
+                            hashAlgorithm = "SHA-1"
+                    ),
+                    vcs = VcsInfo.EMPTY
             )
-            Main.download(pkg, outputDir)
 
-            val workingDirectory = getWorkingDir(Git, pkg)
+            val exception = shouldThrow<DownloadException> {
+                Main.download(pkg, outputDir)
+            }
 
-            workingDirectory.isValid() shouldBe true
+            exception.message shouldBe "Calculated SHA-1 hash 'a6c32b40bf3d76eca54e3c601e5d1470c86fcdfa' differs " +
+                    "from expected hash '0123456789abcdef0123456789abcdef01234567'."
         }.config(tags = setOf(Expensive))
 
-        "Downloads revision for package version from mercurial" {
-            val version = "1.1"
-            val revisionForVersion = "562fed42b4f3"
+        "Falls back to downloading source package when download from VCS fails" {
             val pkg = Package(
-                    packageManager = "",
-                    namespace = "",
-                    name = "mercurial-xcode-plugin",
-                    version = version,
+                    packageManager = "Gradle",
+                    namespace = "junit",
+                    name = "junit",
+                    version = "4.12",
                     declaredLicenses = sortedSetOf(),
                     description = "",
                     homepageUrl = "",
                     binaryArtifact = RemoteArtifact.EMPTY,
-                    sourceArtifact = RemoteArtifact.EMPTY,
-                    vcs = VcsInfo("Mercurial", "https://bitbucket.org/creaceed/mercurial-xcode-plugin", "", "")
+                    sourceArtifact = RemoteArtifact(
+                            url = "https://repo.maven.apache.org/maven2/junit/junit/4.12/junit-4.12-sources.jar",
+                            hash = "a6c32b40bf3d76eca54e3c601e5d1470c86fcdfa",
+                            hashAlgorithm = "SHA-1"
+                    ),
+                    vcs = VcsInfo(
+                            provider = "Git",
+                            url = "https://example.com/invalid-repo-url",
+                            revision = "8964880d9bac33f0a7f030a74c7c9299a8f117c8",
+                            path = ""
+                    )
             )
-            Main.download(pkg, outputDir)
 
-            val workingDir = getWorkingDir(Mercurial, pkg)
+            val downloadDir = Main.download(pkg, outputDir)
 
-            workingDir.getRevision() shouldBe revisionForVersion
+            val licenseFile = File(downloadDir, "LICENSE-junit.txt")
+            licenseFile.exists() shouldBe true
+            licenseFile.length() shouldBe 11376L
+
+            downloadDir.walkTopDown().count() shouldBe 234
         }.config(tags = setOf(Expensive))
     }
-
-    private fun getWorkingDir(vcs: VersionControlSystem, pkg: Package) =
-            vcs.getWorkingDirectory(File(outputDir, "${pkg.normalizedName}/${pkg.version}"))
 }

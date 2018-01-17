@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@
 
 package com.here.ort.analyzer
 
-import io.kotlintest.Spec
+import io.kotlintest.TestCaseContext
 import io.kotlintest.matchers.shouldBe
 import io.kotlintest.specs.StringSpec
 
@@ -32,11 +32,19 @@ import java.io.PrintStream
  */
 class MainTest : StringSpec() {
     private val syntheticProjectDir = File("src/funTest/assets/projects/synthetic")
-    private val outputDir = createTempDir()
 
-    override fun interceptSpec(context: Spec, spec: () -> Unit) {
-        spec()
-        outputDir.deleteRecursively()
+    private lateinit var outputDir: File
+
+    // Required to make lateinit of outputDir work.
+    override val oneInstancePerTest = false
+
+    override fun interceptTestCase(context: TestCaseContext, test: () -> Unit) {
+        outputDir = createTempDir()
+        try {
+            super.interceptTestCase(context, test)
+        } finally {
+            outputDir.deleteRecursively()
+        }
     }
 
     init {

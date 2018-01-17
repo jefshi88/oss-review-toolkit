@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 HERE Europe B.V.
+ * Copyright (c) 2017-2018 HERE Europe B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,10 +41,13 @@ import com.here.ort.utils.ProcessCapture
 import com.here.ort.utils.checkCommandVersion
 import com.here.ort.utils.jsonMapper
 import com.here.ort.utils.log
+import com.here.ort.utils.safeDeleteRecursively
 
 import com.vdurmont.semver4j.Requirement
 
 import java.io.File
+import java.io.IOException
+import java.net.HttpURLConnection
 import java.util.SortedSet
 
 import okhttp3.Request
@@ -62,7 +65,7 @@ class PIP : PackageManager() {
         private const val PIPDEPTREE_VERSION = "0.10.1"
         private const val PYDEP_REVISION = "ea18b40fca03438a0fb362e552c26df2d29fc19f"
 
-        private val PIPDEPTREE_TOP_LEVEL_REGEX = Regex("(\\w+).*")
+        private val PIPDEPTREE_TOP_LEVEL_REGEX = Regex("([\\w-]+).*")
         private val PIPDEPTREE_DEPENDENCIES = arrayOf("pipdeptree", "setuptools", "wheel")
     }
 
@@ -161,7 +164,7 @@ class PIP : PackageManager() {
         if (pipdeptreeJson.exitValue() == 0) {
             val allDependencies = jsonMapper.readTree(pipdeptreeJson.stdout()) as ArrayNode
 
-            if (definitionFile.name == "requirements.txt" && pipdeptree.exitValue() == 0) {
+            if (definitionFile.name != "setup.py" && pipdeptree.exitValue() == 0) {
                 val topLevelDependencies = pipdeptree.stdout().lines().mapNotNull {
                     PIPDEPTREE_TOP_LEVEL_REGEX.matchEntire(it)?.groupValues?.get(1).takeUnless {
                         it in PIPDEPTREE_DEPENDENCIES
@@ -200,63 +203,75 @@ class PIP : PackageManager() {
                         .url("https://pypi.python.org/pypi/${pkg.name}/${pkg.version}/json")
                         .build()
 
-                val pkgJson = OkHttpClientHelper.execute("analyzer", pkgRequest).use { response ->
-                    response.body()?.string()
-                }
+                OkHttpClientHelper.execute(HTTP_CACHE_PATH, pkgRequest).use { response ->
+                    val body = response.body()?.string()?.trim()
 
-                @Suppress("CatchException")
-                try {
-                    val pkgData = jsonMapper.readTree(pkgJson)
-                    val pkgInfo = pkgData["info"]
-
-                    // TODO: Support multiple package types of the same package version. Arbitrarily choose the
-                    // first for now.
-                    val pkgRelease = pkgData["releases"][pkg.version][0]
-
-                    val declaredLicenses = sortedSetOf<String>()
-
-                    // Use the top-level license field as well as the license classifiers as the declared licenses.
-                    setOf(pkgInfo["license"]).mapNotNullTo(declaredLicenses) {
-                        it?.asText()?.removeSuffix(" License")?.takeUnless { it.isBlank() || it == "UNKNOWN" }
-                    }
-
-                    // Example license classifier:
-                    // "License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)"
-                    pkgInfo["classifiers"]?.mapNotNullTo(declaredLicenses) {
-                        val classifier = it.asText().split(" :: ")
-                        if (classifier.first() == "License") {
-                            classifier.last().removeSuffix(" License")
-                        } else {
-                            null
+                    if (response.code() != HttpURLConnection.HTTP_OK || body.isNullOrBlank()) {
+                        log.warn { "Unable to retrieve PyPI meta-data for package '${pkg.identifier}'." }
+                        if (body != null) {
+                            log.warn { "Response was '$body'." }
                         }
+
+                        // Fall back to returning the original package data.
+                        return@use pkg
                     }
 
-                    // Amend package information with more details.
-                    Package(
-                            packageManager = pkg.packageManager,
-                            namespace = pkg.namespace,
-                            name = pkg.name,
-                            version = pkg.version,
-                            declaredLicenses = declaredLicenses,
-                            description = pkgInfo["summary"]?.asText() ?: pkg.description,
-                            homepageUrl = pkgInfo["home_page"]?.asText() ?: pkg.homepageUrl,
-                            binaryArtifact = RemoteArtifact(
-                                    url = pkgRelease["url"]?.asText() ?: pkg.binaryArtifact.url,
-                                    hash = pkgRelease["md5_digest"]?.asText() ?: pkg.binaryArtifact.hash,
-                                    hashAlgorithm = "MD5"
-                            ),
-                            sourceArtifact = RemoteArtifact.EMPTY,
-                            vcs = pkg.vcs
-                    )
-                } catch (e: Exception) {
-                    if (Main.stacktrace) {
-                        e.printStackTrace()
+                    val pkgData = try {
+                        jsonMapper.readTree(body)!!
+                    } catch (e: IOException) {
+                        log.warn { "Unable to parse PyPI meta-data for package '${pkg.identifier}': ${e.message}" }
+
+                        // Fall back to returning the original package data.
+                        return@use pkg
                     }
 
-                    log.warn { "Unable to retrieve PyPI meta-data for package '${pkg.identifier}': ${e.message}" }
+                    try {
+                        val pkgInfo = pkgData["info"]
+                        // TODO: Support multiple package types of the same package version. Arbitrarily choose the
+                        // first for now.
+                        val pkgRelease = pkgData["releases"][pkg.version][0]
 
-                    // Fall back to returning the original package data.
-                    pkg
+                        val declaredLicenses = sortedSetOf<String>()
+
+                        // Use the top-level license field as well as the license classifiers as the declared licenses.
+                        setOf(pkgInfo["license"]).mapNotNullTo(declaredLicenses) {
+                            it?.asText()?.removeSuffix(" License")?.takeUnless { it.isBlank() || it == "UNKNOWN" }
+                        }
+
+                        // Example license classifier:
+                        // "License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)"
+                        pkgInfo["classifiers"]?.mapNotNullTo(declaredLicenses) {
+                            val classifier = it.asText().split(" :: ")
+                            if (classifier.first() == "License") {
+                                classifier.last().removeSuffix(" License")
+                            } else {
+                                null
+                            }
+                        }
+
+                        // Amend package information with more details.
+                        Package(
+                                packageManager = pkg.packageManager,
+                                namespace = pkg.namespace,
+                                name = pkg.name,
+                                version = pkg.version,
+                                declaredLicenses = declaredLicenses,
+                                description = pkgInfo["summary"]?.asText() ?: pkg.description,
+                                homepageUrl = pkgInfo["home_page"]?.asText() ?: pkg.homepageUrl,
+                                binaryArtifact = RemoteArtifact(
+                                        url = pkgRelease["url"]?.asText() ?: pkg.binaryArtifact.url,
+                                        hash = pkgRelease["md5_digest"]?.asText() ?: pkg.binaryArtifact.hash,
+                                        hashAlgorithm = "MD5"
+                                ),
+                                sourceArtifact = RemoteArtifact.EMPTY,
+                                vcs = pkg.vcs
+                        )
+                    } catch (e: NullPointerException) {
+                        log.warn { "Unable to parse PyPI meta-data for package '${pkg.identifier}': ${e.message}" }
+
+                        // Fall back to returning the original package data.
+                        pkg
+                    }
                 }
             }
         } else {
@@ -282,7 +297,9 @@ class PIP : PackageManager() {
         )
 
         // Remove the virtualenv by simply deleting the directory.
-        virtualEnvDir.deleteRecursively()
+        if (!virtualEnvDir.safeDeleteRecursively()) {
+            log.warn { "Unable to delete temporary directory '$virtualEnvDir'." }
+        }
 
         return AnalyzerResult(true, project, packages)
     }
@@ -290,7 +307,7 @@ class PIP : PackageManager() {
     private fun setupVirtualEnv(workingDir: File, definitionFile: File): File {
         // Create an out-of-tree virtualenv.
         println("Creating a virtualenv for the '${workingDir.name}' project directory...")
-        val virtualEnvDir = createTempDir(workingDir.name, "virtualenv")
+        val virtualEnvDir = createTempDir(workingDir.name.padEnd(3, '_'), "virtualenv")
         ProcessCapture(workingDir, "virtualenv", virtualEnvDir.path).requireSuccess()
 
         var pip: ProcessCapture
